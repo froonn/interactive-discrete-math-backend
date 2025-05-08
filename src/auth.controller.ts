@@ -48,6 +48,8 @@ export async function registerUser(req: Request, res: Response): Promise<Respons
 export async function loginUser(req: Request, res: Response) {
     const {login, firstHash} = req.body;
 
+    const JWT_SECRET = process.env.SECRET_KEY || 'default_secret';
+
     const userLinks = await scClient.searchLinksByContents([`user_${login}`]);
 
     if (userLinks[0].length === 0) {
@@ -79,11 +81,76 @@ export async function loginUser(req: Request, res: Response) {
             (findedLogin[0].data === `user_${login}`) &&
             (findedHashedPassword[0].data === CryptoJS.SHA256(firstHash).toString())
         ) {
-            const token = jwt.sign({ name: login }, process.env.SECRET_KEY, { expiresIn: '2 days' });
+            // Generate access and refresh tokens
+            const accessToken = jwt.sign(
+                { name: login },
+                JWT_SECRET,
+                { expiresIn: '15m' }
+            );
 
-            return res.status(200).json({success: true, user: { login }, token: token});
+            const refreshToken = jwt.sign(
+                { name: login },
+                JWT_SECRET,
+                { expiresIn: '30d' }
+            );
+
+            // Save refreshToken in httpOnly cookie
+            res.cookie('refreshToken', refreshToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'strict',
+                maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+            });
+
+            return res.status(200).json({
+                success: true,
+                user: { login },
+                accessToken: accessToken
+            });
         }
     }
 
     return res.status(401).json({success: false, error: 'Неверный логин или пароль'});
+}
+
+export async function refreshToken(req: Request, res: Response) {
+    const JWT_SECRET = process.env.SECRET_KEY || 'default_secret';
+
+    try {
+        const refreshToken = req.cookies?.refreshToken;
+        if (!refreshToken) {
+            return res.status(401).json({ success: false, error: 'Отсутствует refresh token' });
+        }
+
+        jwt.verify(
+            refreshToken,
+            JWT_SECRET,
+            (err: any, decoded: any) => {
+                if (err) {
+                    return res.status(403).json({ success: false, error: 'Неверный или истёкший refresh token' });
+                }
+                // В decoded содержится полезная нагрузка токена, например { name }
+                const accessToken = jwt.sign(
+                    { name: decoded.name },
+                    JWT_SECRET,
+                    { expiresIn: '15m' }
+                );
+                return res.status(200).json({
+                    success: true,
+                    accessToken: accessToken
+                });
+            }
+        );
+    } catch (err) {
+        return res.status(500).json({ success: false, error: 'Не удалось обновить access token' });
+    }
+}
+
+export async function logoutUser(req: Request, res: Response) {
+    res.clearCookie('refreshToken', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+    });
+    return res.status(200).json({ success: true, message: 'Вы успешно вышли из системы' });
 }
