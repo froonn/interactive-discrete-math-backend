@@ -1,7 +1,9 @@
-import {Request, Response} from 'express';
-import {scClient} from './connect-to-sc-client';
-import {ScTemplate, ScType} from "ts-sc-client";
+import { Request, Response } from 'express';
+import { scClient } from './connect-to-sc-client';
+import { ScTemplate, ScType, ScAddr } from "ts-sc-client";
+import jwt from 'jsonwebtoken';
 import CryptoJS from "crypto-js";
+import 'dotenv/config';
 
 export async function registerUser(req: Request, res: Response): Promise<Response> {
     try {
@@ -41,28 +43,18 @@ export async function registerUser(req: Request, res: Response): Promise<Respons
             error: 'Произошла внутренняя ошибка сервера'
         });
     }
-};
+}
 
 export async function loginUser(req: Request, res: Response) {
     const {login, firstHash} = req.body;
 
     const userLinks = await scClient.searchLinksByContents([`user_${login}`]);
-    console.log(`user`);
-    console.log(userLinks[0][0]);
 
     if (userLinks[0].length === 0) {
-        return res.status(400).json({success: false, error: 'Неверный логин или пароль'});
+        return res.status(401).json({success: false, error: 'Неверный логин или пароль'});
     }
 
-    const hashedPasswordLinks = await scClient.searchLinksByContents([CryptoJS.SHA256(firstHash).toString()]);
-    console.log(`pass`);
-    console.log(hashedPasswordLinks[0][0]);
-
-    if (userLinks[0].length === 0) {
-        return res.status(400).json({success: false, error: 'Неверный логин или пароль'});
-    }
-
-    const {nrelHashedPassword} = await scClient.searchKeynodes(`nrel_hashed_password`);
+    const { nrelHashedPassword } = await scClient.searchKeynodes(`nrel_hashed_password`);
 
     const loginAlias = "_login";
     const hashedPasswordAlias = "_hashed_password";
@@ -76,21 +68,22 @@ export async function loginUser(req: Request, res: Response) {
         nrelHashedPassword
     );
 
-
     const searchResult = await scClient.searchByTemplate(template);
 
-    searchResult.forEach((item) => {
+    for (const item of searchResult) {
 
-        console.log(item.get(loginAlias));
-        console.log(item.get(hashedPasswordAlias));
+        const findedLogin = await scClient.getLinkContents([new ScAddr(item.get(loginAlias).value + 1)]);
+        const findedHashedPassword = await scClient.getLinkContents([new ScAddr(item.get(hashedPasswordAlias).value + 1)]);
 
         if (
-            ((item.get(loginAlias).value + 1) === userLinks[0][0].value) &&
-            ((item.get(hashedPasswordAlias).value + 1) === hashedPasswordLinks[0][0].value)
+            (findedLogin[0].data === `user_${login}`) &&
+            (findedHashedPassword[0].data === CryptoJS.SHA256(firstHash).toString())
         ) {
-            return res.status(201).json({success: true, message: 'Успех'});
-        }
-    });
+            const token = jwt.sign({ name: login }, process.env.SECRET_KEY, { expiresIn: '2 days' });
 
-    return res.status(400).json({success: false, error: 'Неверный логин или пароль'});
+            return res.status(200).json({success: true, user: { login }, token: token});
+        }
+    }
+
+    return res.status(401).json({success: false, error: 'Неверный логин или пароль'});
 }
