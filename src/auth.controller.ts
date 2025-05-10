@@ -48,6 +48,10 @@ export async function registerUser(req: Request, res: Response): Promise<Respons
 export async function loginUser(req: Request, res: Response) {
     const {login, firstHash} = req.body;
 
+    if (login.includes(' ')) {
+        return res.status(400).json({success: false, error: 'Логин не должен содержать пробелы'})
+    }
+
     const JWT_SECRET = process.env.SECRET_KEY || 'default_secret';
 
     const userLinks = await scClient.searchLinksByContents([`user_${login}`]);
@@ -104,7 +108,7 @@ export async function loginUser(req: Request, res: Response) {
 
             return res.status(200).json({
                 success: true,
-                user: { login },
+                user: login,
                 accessToken: accessToken
             });
         }
@@ -129,7 +133,6 @@ export async function refreshToken(req: Request, res: Response) {
                 if (err) {
                     return res.status(403).json({ success: false, error: 'Неверный или истёкший refresh token' });
                 }
-                // В decoded содержится полезная нагрузка токена, например { name }
                 const accessToken = jwt.sign(
                     { name: decoded.name },
                     JWT_SECRET,
