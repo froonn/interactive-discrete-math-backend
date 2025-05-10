@@ -9,6 +9,10 @@ export async function registerUser(req: Request, res: Response): Promise<Respons
     try {
         const {login, firstHash} = req.body;
 
+        if (login.includes(' ')) {
+            return res.status(400).json({success: false, error: 'Логин не должен содержать пробелы'})
+        }
+
         if (!login || !firstHash) {
             return res.status(400).json({success: false, error: 'Логин и пароль обязательны'});
         }
